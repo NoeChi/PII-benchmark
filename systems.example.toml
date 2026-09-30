@@ -1,0 +1,37 @@
+# 受測系統設定。複製成 systems.toml 後修改:cp systems.example.toml systems.toml
+# 每個 [systems.<名稱>] 是一套受測系統;名稱會出現在報告,也用來和基準比對,改名等於換一套系統。
+# 字串裡的 ${VAR} 會換成環境變數(可放在 .env),token 不要直接寫在這裡。
+
+# ── 最簡單的情況:POST {"text": "..."} → 回 {"masked": "..."} ──────────────
+[systems.my-api]
+type = "http"
+url = "http://127.0.0.1:8000/deid"
+body = { text = "{text}" }        # request body 範本;值等於 "{text}" 的地方換成測資
+output = "masked"                 # 從回應 JSON 取遮蔽結果的路徑;巢狀用點,例如 "data.result.0.text"
+# headers = { Authorization = "Bearer ${MY_API_TOKEN}" }
+# label_pattern = '\[([A-Z_]+)\]' # 遮蔽標籤的 regex(第一個 group 當型別名稱),見 README「label_pattern」
+# timeout = 600                   # 秒
+# concurrency = 4                 # 同時在途的請求數
+# verify_tls = true               # 自簽憑證可設 false
+
+# ── 其他可用欄位 ────────────────────────────────────────────────────────
+# method = "POST"
+# format = "json"                 # json | form(application/x-www-form-urlencoded)| raw(body 範本是純字串)
+# response_type = "json"          # json | text(回應本身就是遮蔽後的文字,此時 output = "")
+# status_field = "status"         # 回應裡表示成功的欄位;值不在 ok_values 就記為錯誤
+# ok_values = ["success"]
+
+# ── 範例:院內 privacy_guard v2 ─────────────────────────────────────────
+# [systems.v2]
+# type = "http"
+# url = "${V2_URL}"
+# body = { text = "{text}", redaction_categories = { name = true, location = true, phone = true, id = true, email = true } }
+# output = "value"
+# status_field = "status"
+# ok_values = ["success"]
+# label_pattern = '\[PII:([A-Z_]+)\]|<([A-Z_]+)>'
+
+# ── 範例:hermes-stack deid-web(會多用 /api/restore 量型別、一致性、還原)────
+# [systems.deid-web]
+# type = "deid-web"
+# url = "http://127.0.0.1:8199"
