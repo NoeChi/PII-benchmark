@@ -10,26 +10,57 @@
 
 需要 Python 3.11+ 與 [uv](https://docs.astral.sh/uv/)。
 
-```bash
-# 1. 描述你的 API
-cp systems.example.toml systems.toml      # 編輯 url / body / output
-cp .env.example .env                       # 需要 token 就放這裡,systems.toml 用 ${VAR} 引用
-
-# 2. 先送一句範例確認接得上
-uv run python -m deid_bench check
-
-# 3. 跑全部
-./run.sh
-```
-
-不想寫設定檔,也可以臨時指定一套:
+**第一次使用(每台電腦只做一次)**:建立設定檔,再把裡面的 `url` / `body` / `output` 改成你的 API。
+⚠️ 已經有 `systems.toml` 就別再 `cp`,會把改好的設定蓋掉。
 
 ```bash
-uv run python -m deid_bench check --url http://127.0.0.1:8000/deid
-./run.sh --url http://127.0.0.1:8000/deid --name my-api \
-  --body '{"text": "{text}", "lang": "zh-TW"}' --output data.masked \
-  --header "Authorization: Bearer $TOKEN" --label-pattern '\[([A-Z_]+)\]'
+cp systems.example.toml systems.toml      # 然後編輯 systems.toml(範例檔裡的網址是假的,一定要改)
+cp .env.example .env                       # 選用:API 需要 token 才要,systems.toml 用 ${VAR} 引用
 ```
+
+**測試**:下面兩個指令都會打 `systems.toml` 裡寫的**所有**系統,差別只在送多少。
+
+1. **確認連線(剛寫好或改過 `systems.toml` 時才需要)**:每套只送 1 句範例,印出輸入與輸出,看到 `✓ 接得上` 就代表設定沒問題。
+
+   ```bash
+   uv run python -m deid_bench check
+   ```
+
+2. **正式跑考卷**:每套送整份考卷(約 240 題),產生報告。設定沒改的話,之後每次都只要跑這個。
+
+   ```bash
+   ./run.sh
+   ```
+
+### 不寫設定檔,用參數臨時指定一套
+
+加了 `--url` 就**不讀** `systems.toml`,改打你指定的網址。
+
+以下的網址、欄位名、token 都是**範例值**,要換成你的 API 實際的樣子,照抄會連不到:
+
+```bash
+# 最少只要給 --url;API 收 {"text": "..."}、回 {"masked": "..."} 時其他都用預設就好
+uv run python -m deid_bench check --url https://deid.example.com/api/mask
+
+# 格式不同時,用參數描述
+export API_TOKEN=你的token
+./run.sh --url https://deid.example.com/api/mask --name my-api \
+  --body '{"text": "{text}", "lang": "zh-TW"}' \
+  --output data.masked \
+  --header "Authorization: Bearer $API_TOKEN" \
+  --label-pattern '\[([A-Z_]+)\]'
+```
+
+| 參數 | 要改成什麼 | 沒給時 |
+|---|---|---|
+| `--url` | 你的 API 位址(必填) | — |
+| `--name` | 隨便取,報告與基準比較用的系統名稱 | `api` |
+| `--body` | 你的 API 收的 JSON;要放測資的地方寫 `"{text}"`,其餘照你的 API 填 | `{"text": "{text}"}` |
+| `--output` | 回應 JSON 中遮蔽結果的位置;`{"data": {"masked": "..."}}` 就寫 `data.masked` | `masked` |
+| `--header` | 需要認證才加;可重複給多個 | 不加 |
+| `--label-pattern` | 你的 API 遮蔽標籤的樣子,見下方「label_pattern」 | 不設 |
+
+不確定回應長什麼樣?先用 `curl` 打一次看回傳的 JSON,再決定 `--output`。
 
 ## 設定受測系統(`systems.toml`)
 
@@ -64,18 +95,87 @@ label_pattern = '\[([A-Z_]+)\]'     # 建議填,見下
 
 ### `label_pattern`
 
-用來辨識輸出中的遮蔽標籤,影響兩件事:
+**一句話:告訴測試工具「你的 API 把個資遮掉後,會換成什麼樣子」。** 填了算得比較準;不填也能跑。
 
-1. **誘餌題(adversarial)的誤遮**:這些文字完全沒有個資,輸出只要比對到任何標籤就算誤遮。**沒填時改成「輸出與原文不同就算誤遮」**,所以 API 若會順手改動空白或標點,誤遮會被高估,建議填。
-2. **人名部分殘留**:判斷 `[NAME]彤` 這類「標籤旁邊還留一個字」。沒填時用寬鬆的預設樣式(`[...]`、`<TAG>`、`***`、`█`)。
+每個 API 遮個資的寫法不一樣,例如輸入 `病人王小明`:
 
-有 capture group 時,第一個非空 group 當作型別名稱,報告末尾會統計各型別的用量。
+| API 輸出 | 標籤長相 | `label_pattern` 可以這樣寫 |
+|---|---|---|
+| `病人[NAME]` | `[大寫字]` | `'\[([A-Z_]+)\]'` |
+| `病人[PII:PERSON]` | `[PII:大寫字]` | `'\[PII:([A-Z_]+)\]'` |
+| `病人<PERSON>` | `<大寫字>` | `'<([A-Z_]+)>'` |
+| `病人***` | 星號 | `'\*{2,}'` |
+
+好幾種寫法混用時用 `|` 串起來,例如 `'\[PII:([A-Z_]+)\]|<([A-Z_]+)>'`。在 toml 裡記得用**單引號**包起來,反斜線才不會被吃掉。
+
+**為什麼需要知道標籤長相?用在兩個地方:**
+
+1. **抓「不該遮卻遮了」**。考卷裡有一組誘餌題(adversarial),內容完全沒有個資,只是故意放了容易誤判的字,例如:
+
+   ```
+   病人罹患川崎病,轉介至台中榮民總醫院,由護理師衛教。
+   ```
+
+   正確答案是一個字都不遮。
+   - **有填**:輸出只要出現標籤(例如把「川崎」當人名遮成 `罹患[NAME]病`),就算誤遮。
+   - **沒填**:工具不知道標籤長怎樣,只能比「輸出跟原文一不一樣」。有些 API 會順手改掉空白或標點,明明沒遮也會被判誤遮,分數會偏低。
+
+2. **抓「只遮一半」**。例如 `郭曉彤` 被輸出成 `[NAME]彤`,最後一個字還留著,仍可能認出是誰。工具要知道 `[NAME]` 是標籤,才看得出「標籤旁邊還黏著一個字」。沒填時會拿常見的長相去猜(`[...]`、`<TAG>`、`***`、`█`)。
+
+**括號 `( )` 的作用**:regex 裡括號括起來的部分會被當成**標籤種類**。例如 `\[PII:([A-Z_]+)\]` 碰到 `[PII:PERSON]` 會抓出 `PERSON`,報告最後會統計各種類的數量(`PERSON 120, PHONE 45…`),看得出你的 API 最常把什麼當個資。沒有括號時,就用整個標籤當名稱。
+
+**怎麼確認寫對了**:跑 `uv run python -m deid_bench check`,輸出裡有「標籤:{...}」那行就對了;寫錯會提醒「label_pattern 沒有比對到任何標籤」。
 
 ### `type = "deid-web"`
 
-hermes-stack 的 deid-web 除了遮蔽,還能用 `/api/restore` 取回代號與原文的對照,所以能多量四項:代號型別對不對、同一原文是否對到多個代號、遮蔽範圍有沒有吃到相鄰字、還原後是否等於原文。一般 API 沒有這些功能,報告裡就不會出現這幾欄。
+> 只跟 hermes-stack 的 deid-web(GX10 上的去個資網頁服務)有關。測其他 API 的人可以跳過這一節,一律用 `type = "http"`。
 
-在 GX10 上跑時,用 `scripts/run-with-deid-web.sh` 起一個隔離的實例(port 8199、獨立 DB),避免把幾百筆測試寫進正式環境(8100)的 conversion log。
+**一句話:deid-web 遮完還能還原,所以能多檢查四件事。**
+
+一般的去識別化 API 是**單向**的,遮掉就拿不回原文:
+
+```
+輸入:病人王小明來看診
+輸出:病人[PII:PERSON]來看診
+```
+
+deid-web 是**雙向**的:用帶編號的代號遮蔽,再透過 `/api/restore` 換回原文。
+
+```
+輸出:病人[P_NAME_a1b2c3]來看診
+還原:[P_NAME_a1b2c3] → 王小明
+```
+
+因為知道「哪個代號對應哪段原文」,所以能多檢查:
+
+| 檢查項目 | 出錯的例子 | 為什麼是問題 |
+|---|---|---|
+| 代號型別對不對 | 身分證 `A123456789` 被標成 `[PHONE_…]` | 有遮到,但種類判錯 |
+| 同一個人是否對到同一個代號 | 文中兩次「王小明」,一次 `[P_NAME_a1…]`、一次 `[P_NAME_b2…]` | 讀的人會以為是兩個不同的人 |
+| 有沒有多遮到旁邊的字 | `護理師王小明` → `護理[P_NAME_…]` | 連「師」也一起吃掉 |
+| 還原後是否跟原文一模一樣 | 遮完再還原,少了一個字 | 還原功能有 bug |
+
+一般 API 沒有還原功能,這四項量不到,報告裡就不會出現這幾欄。
+
+**在 GX10 上測 deid-web:用 `scripts/run-with-deid-web.sh`,不要直接打正式服務。**
+
+GX10 的 `:8100` 是正式服務,每處理一筆都會寫進紀錄(conversion log)。直接拿考卷打它,幾百筆假資料會混進正式紀錄。這支腳本會:
+
+1. 另外起一個**測試用**的 deid-web(port `8199`、獨立資料庫)
+2. 拿考卷打這個測試實例
+3. 跑完自動關掉
+
+`systems.toml` 要有這一段,才會測到它:
+
+```toml
+[systems.deid-web]
+type = "deid-web"
+url = "http://127.0.0.1:8199"
+```
+
+```bash
+WEB_DIR=~/Taro/Projects/hermes-stack/deid-web scripts/run-with-deid-web.sh
+```
 
 ## 指令
 

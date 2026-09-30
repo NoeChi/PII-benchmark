@@ -5,7 +5,7 @@
 # ── 最簡單的情況:POST {"text": "..."} → 回 {"masked": "..."} ──────────────
 [systems.my-api]
 type = "http"
-url = "http://127.0.0.1:8000/deid"
+url = "https://deid.example.com/api/mask"   # ← 範例網址,改成你的 API
 body = { text = "{text}" }        # request body 範本;值等於 "{text}" 的地方換成測資
 output = "masked"                 # 從回應 JSON 取遮蔽結果的路徑;巢狀用點,例如 "data.result.0.text"
 # headers = { Authorization = "Bearer ${MY_API_TOKEN}" }
